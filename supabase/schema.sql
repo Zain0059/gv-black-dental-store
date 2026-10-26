@@ -89,6 +89,57 @@ as $$
   );
 $$;
 
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $
+begin
+  insert into public.profiles(id, display_name)
+  values (new.id, coalesce(new.raw_user_meta_data->>'full_name', new.email, ''))
+  on conflict (id) do nothing;
+  return new;
+end;
+$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+after insert on auth.users
+for each row execute procedure public.handle_new_user();
+
+create or replace function public.adjust_stock(
+  p_product_id uuid,
+  p_delta numeric,
+  p_reason text
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $
+declare
+  v_product public.products%rowtype;
+  v_movement_id uuid;
+begin
+  if auth.uid() is null or not public.has_any_role(array['owner','manager','inventory']) then
+    raise exception 'Not authorized to adjust stock';
+  end if;
+  if p_delta is null or p_delta = 0 or nullif(trim(p_reason), '') is null then
+    raise exception 'A non-zero quantity and reason are required';
+  end if;
+  select * into v_product from public.products where id = p_product_id for update;
+  if not found then raise exception 'Product is unavailable'; end if;
+  if v_product.stock_qty + p_delta < 0 then raise exception 'Stock cannot become negative'; end if;
+  update public.products set stock_qty = stock_qty + p_delta, updated_at = now()
+  where id = p_product_id;
+  insert into public.stock_movements(product_id, created_by, quantity_delta, reason)
+  values (p_product_id, auth.uid(), p_delta, trim(p_reason))
+  returning id into v_movement_id;
+  return v_movement_id;
+end;
+$;
+
 create or replace function public.create_sale(
   p_customer_id uuid,
   p_items jsonb,
@@ -228,13 +279,13 @@ create policy "stock movements read" on public.stock_movements for select to aut
 using (public.has_any_role(array['owner','manager','inventory','accountant']));
 
 revoke all on function public.create_sale(uuid,jsonb,numeric,text) from public, anon;
-revoke all on function public.record_payment(uuid,numeric,text) from public, anon;
+revoke all on function public.record_payment(uuid,numeric,text) from public, anon;\nrevoke all on function public.adjust_stock(uuid,numeric,text) from public, anon;
 grant execute on function public.create_sale(uuid,jsonb,numeric,text) to authenticated;
-grant execute on function public.record_payment(uuid,numeric,text) to authenticated;
+grant execute on function public.record_payment(uuid,numeric,text) to authenticated;\ngrant execute on function public.adjust_stock(uuid,numeric,text) to authenticated;
 grant execute on function public.has_any_role(text[]) to authenticated;
 grant select on public.profiles, public.products, public.customers, public.invoices,
   public.invoice_items, public.payments, public.stock_movements to authenticated;
-grant insert, update, delete on public.products, public.customers to authenticated;
+grant insert on public.products, public.customers to authenticated;\ngrant update (sku, name, manufacturer, gtin, unit_price, active) on public.products to authenticated;\ngrant update on public.customers to authenticated;
 
 -- Create the first owner by promoting their profile after they sign in:
 -- update public.profiles set role = 'owner' where id = '<auth user uuid>';
