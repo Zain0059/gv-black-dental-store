@@ -163,11 +163,11 @@ begin
   if auth.uid() is null or not public.has_any_role(array['owner','manager','sales']) then
     raise exception 'Not authorized to create sales';
   end if;
-  if p_customer_id is null or jsonb_typeof(p_items) <> 'array' or jsonb_array_length(p_items) = 0 then
+  if p_customer_id is null or p_items is null or jsonb_typeof(p_items) is distinct from 'array' or jsonb_array_length(p_items) = 0 then
     raise exception 'Customer and at least one invoice item are required';
   end if;
   if coalesce(p_paid, 0) < 0 then raise exception 'Payment cannot be negative'; end if;
-  if p_method not in ('cash','bank_transfer','card','wallet') then raise exception 'Invalid payment method'; end if;
+  if coalesce(p_method,'') not in ('cash','bank_transfer','card','wallet') then raise exception 'Invalid payment method'; end if;
   if exists (
     select 1 from jsonb_to_recordset(p_items) as x(product_id uuid, quantity numeric)
     group by x.product_id having count(*) > 1
