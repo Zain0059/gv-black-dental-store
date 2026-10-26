@@ -46,7 +46,7 @@ create table if not exists public.products (
   stock_qty numeric(12,3) not null default 0 check (stock_qty >= 0),
   active boolean not null default true,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
 alter table public.products drop constraint if exists products_gtin_valid;
