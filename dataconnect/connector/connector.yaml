@@ -1,5 +1,0 @@
-connectorId: gvBlackStore
-generate:
-  javascriptSdk:
-    outputDir: "../../generated"
-    package: "@gvblack/dental-store-data"
