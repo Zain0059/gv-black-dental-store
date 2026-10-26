@@ -11,6 +11,31 @@ create table if not exists public.profiles (
   created_at timestamptz not null default now()
 );
 
+create or replace function public.is_valid_gtin(p_gtin text)
+returns boolean
+language plpgsql
+immutable
+set search_path = pg_catalog
+as $$
+declare
+  v_index integer;
+  v_weight integer;
+  v_sum integer := 0;
+  v_check_digit integer;
+begin
+  if p_gtin is null or p_gtin !~ '^[0-9]+$'
+     or length(p_gtin) not in (8,12,13,14) then
+    return false;
+  end if;
+  for v_index in 1..(length(p_gtin) - 1) loop
+    v_weight := case when mod(length(p_gtin) - v_index, 2) = 1 then 3 else 1 end;
+    v_sum := v_sum + (ascii(substr(p_gtin, v_index, 1)) - 48) * v_weight;
+  end loop;
+  v_check_digit := ascii(substr(p_gtin, length(p_gtin), 1)) - 48;
+  return mod(10 - mod(v_sum, 10), 10) = v_check_digit;
+end;
+$$;
+
 create table if not exists public.products (
   id uuid primary key default gen_random_uuid(),
   sku text not null unique,
@@ -22,8 +47,11 @@ create table if not exists public.products (
   active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  check (gtin is null or gtin ~ '^[0-9]{8}([0-9]{4,6})?$')
 );
+
+alter table public.products drop constraint if exists products_gtin_valid;
+alter table public.products add constraint products_gtin_valid
+  check (gtin is null or public.is_valid_gtin(gtin));
 
 create table if not exists public.customers (
   id uuid primary key default gen_random_uuid(),
@@ -94,14 +122,14 @@ returns trigger
 language plpgsql
 security definer
 set search_path = public, pg_temp
-as $
+as $$
 begin
   insert into public.profiles(id, display_name)
   values (new.id, coalesce(new.raw_user_meta_data->>'full_name', new.email, ''))
   on conflict (id) do nothing;
   return new;
 end;
-$;
+$$;
 
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
@@ -117,7 +145,7 @@ returns uuid
 language plpgsql
 security definer
 set search_path = public, pg_temp
-as $
+as $$
 declare
   v_product public.products%rowtype;
   v_movement_id uuid;
@@ -138,7 +166,7 @@ begin
   returning id into v_movement_id;
   return v_movement_id;
 end;
-$;
+$$;
 
 create or replace function public.create_sale(
   p_customer_id uuid,
@@ -260,8 +288,8 @@ drop policy if exists "products read" on public.products;
 create policy "products read" on public.products for select to authenticated using (true);
 drop policy if exists "products write" on public.products;
 create policy "products write" on public.products for all to authenticated
-using (public.has_any_role(array['owner','manager','inventory']))
-with check (public.has_any_role(array['owner','manager','inventory']));
+using (public.has_any_role(array['owner','manager']))
+with check (public.has_any_role(array['owner','manager']));
 drop policy if exists "customers read" on public.customers;
 create policy "customers read" on public.customers for select to authenticated using (true);
 drop policy if exists "customers write" on public.customers;
@@ -278,14 +306,20 @@ drop policy if exists "stock movements read" on public.stock_movements;
 create policy "stock movements read" on public.stock_movements for select to authenticated
 using (public.has_any_role(array['owner','manager','inventory','accountant']));
 
+revoke all on function public.handle_new_user() from public, anon;
+revoke all on function public.has_any_role(text[]) from public, anon;
 revoke all on function public.create_sale(uuid,jsonb,numeric,text) from public, anon;
-revoke all on function public.record_payment(uuid,numeric,text) from public, anon;\nrevoke all on function public.adjust_stock(uuid,numeric,text) from public, anon;
+revoke all on function public.record_payment(uuid,numeric,text) from public, anon;
+revoke all on function public.adjust_stock(uuid,numeric,text) from public, anon;
 grant execute on function public.create_sale(uuid,jsonb,numeric,text) to authenticated;
-grant execute on function public.record_payment(uuid,numeric,text) to authenticated;\ngrant execute on function public.adjust_stock(uuid,numeric,text) to authenticated;
+grant execute on function public.record_payment(uuid,numeric,text) to authenticated;
+grant execute on function public.adjust_stock(uuid,numeric,text) to authenticated;
 grant execute on function public.has_any_role(text[]) to authenticated;
 grant select on public.profiles, public.products, public.customers, public.invoices,
   public.invoice_items, public.payments, public.stock_movements to authenticated;
-grant insert on public.products, public.customers to authenticated;\ngrant update (sku, name, manufacturer, gtin, unit_price, active) on public.products to authenticated;\ngrant update on public.customers to authenticated;
+grant insert (sku, name, manufacturer, gtin, unit_price, active) on public.products to authenticated;
+grant update (sku, name, manufacturer, gtin, unit_price, active) on public.products to authenticated;
+grant insert, update on public.customers to authenticated;
 
 -- Create the first owner by promoting their profile after they sign in:
 -- update public.profiles set role = 'owner' where id = '<auth user uuid>';
