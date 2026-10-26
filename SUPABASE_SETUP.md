@@ -22,4 +22,4 @@ This repository is a browser based prototype. The Supabase schema in `supabase/s
 
 ## Current integration status
 
-The schema and setup steps are prepared on the development branch. The static HTML app still runs on localStorage. Completing cloud login and replacing local writes with Supabase calls requires the project's URL and publishable key, then a separate browser-client integration and data migration. No secret key is needed for that work.
+The schema and setup steps are prepared on the main branch. The static HTML app still runs on localStorage. Completing cloud login and replacing local writes with Supabase calls requires the project's URL and publishable key, then a separate browser-client integration and data migration. No secret key is needed for that work.
