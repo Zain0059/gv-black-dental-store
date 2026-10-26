@@ -233,7 +233,7 @@ begin
     raise exception 'Not authorized to record payments';
   end if;
   if p_amount is null or p_amount <= 0 then raise exception 'Payment must be positive'; end if;
-  if p_method not in ('cash','bank_transfer','card','wallet') then raise exception 'Invalid payment method'; end if;
+  if coalesce(p_method,'') not in ('cash','bank_transfer','card','wallet') then raise exception 'Invalid payment method'; end if;
   select * into v_invoice from public.invoices where id = p_invoice_id and status = 'issued' for update;
   if not found then raise exception 'Invoice is unavailable'; end if;
   select coalesce(sum(amount),0) into v_paid from public.payments where invoice_id = p_invoice_id;
