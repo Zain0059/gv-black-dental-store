@@ -114,7 +114,7 @@ begin
     raise exception 'Not authorized to adjust stock';
   end if;
   if not public.is_finite_numeric(p_delta) or p_delta = 0
-     or nullif(pg_catalog.trim(p_reason), '') is null then
+     or nullif(pg_catalog.btrim(p_reason), '') is null then
     raise exception 'A finite non-zero quantity and reason are required';
   end if;
   select * into v_product from public.products where id = p_product_id for update;
@@ -123,7 +123,7 @@ begin
   update public.products set stock_qty = stock_qty + p_delta, updated_at = pg_catalog.now()
   where id = p_product_id;
   insert into public.stock_movements(product_id, created_by, quantity_delta, reason)
-  values (p_product_id, auth.uid(), p_delta, pg_catalog.trim(p_reason))
+  values (p_product_id, auth.uid(), p_delta, pg_catalog.btrim(p_reason))
   returning id into v_movement_id;
   return v_movement_id;
 end;
@@ -157,7 +157,7 @@ begin
   if p_paid is not null and (not public.is_finite_numeric(p_paid) or p_paid < 0) then
     raise exception 'Payment must be finite and non-negative';
   end if;
-  if pg_catalog.coalesce(p_method,'') not in ('cash','bank_transfer','card','wallet') then
+  if coalesce(p_method,'') not in ('cash','bank_transfer','card','wallet') then
     raise exception 'Invalid payment method';
   end if;
   if exists (
@@ -198,9 +198,9 @@ begin
     values (v_product.id, auth.uid(), -v_quantity, 'sale', v_invoice_id);
   end loop;
 
-  if pg_catalog.coalesce(p_paid, 0) > v_total then raise exception 'Payment exceeds invoice total'; end if;
+  if coalesce(p_paid, 0) > v_total then raise exception 'Payment exceeds invoice total'; end if;
   update public.invoices set total = v_total where id = v_invoice_id;
-  if pg_catalog.coalesce(p_paid, 0) > 0 then
+  if coalesce(p_paid, 0) > 0 then
     insert into public.payments(invoice_id, received_by, amount, method)
     values (v_invoice_id, auth.uid(), p_paid, p_method);
   end if;
@@ -227,12 +227,12 @@ begin
   if not public.is_finite_numeric(p_amount) or p_amount <= 0 then
     raise exception 'Payment must be finite and positive';
   end if;
-  if pg_catalog.coalesce(p_method,'') not in ('cash','bank_transfer','card','wallet') then
+  if coalesce(p_method,'') not in ('cash','bank_transfer','card','wallet') then
     raise exception 'Invalid payment method';
   end if;
   select * into v_invoice from public.invoices where id = p_invoice_id and status = 'issued' for update;
   if not found then raise exception 'Invoice is unavailable'; end if;
-  select pg_catalog.coalesce(sum(amount),0) into v_paid from public.payments where invoice_id = p_invoice_id;
+  select coalesce(sum(amount),0) into v_paid from public.payments where invoice_id = p_invoice_id;
   if v_paid + p_amount > v_invoice.total then raise exception 'Payment exceeds remaining balance'; end if;
   insert into public.payments(invoice_id, received_by, amount, method)
   values (v_invoice.id, auth.uid(), p_amount, p_method)
@@ -258,6 +258,15 @@ begin
       raise exception 'Not authorized to create customers';
     end if;
   elsif tg_op = 'UPDATE' then
+    if public.has_any_role(array['accountant']::text[])
+       and not public.has_any_role(array['owner']::text[])
+       and (new.name is distinct from old.name
+         or new.phone is distinct from old.phone
+         or new.email is distinct from old.email
+         or new.address is distinct from old.address
+         or new.active is distinct from old.active) then
+      raise exception 'Accountant may only edit opening balance';
+    end if;
     if new.opening_balance is distinct from old.opening_balance
        and not public.has_any_role(array['owner','accountant']::text[]) then
       raise exception 'Only owner or accountant may edit opening balance';
@@ -274,6 +283,14 @@ drop trigger if exists guard_customer_balance_write on public.customers;
 create trigger guard_customer_balance_write
 before insert or update on public.customers
 for each row execute function public.guard_customer_balance_write();
+
+-- Inactive users cannot even read their own profile row.
+drop policy if exists "profile read" on public.profiles;
+create policy "profile read" on public.profiles for select to authenticated
+using (
+  (id = auth.uid() and active is true)
+  or public.has_any_role(array['owner','manager']::text[])
+);
 
 -- Replace broad authenticated reads with active role-scoped policies.
 drop policy if exists "products read" on public.products;
