@@ -1,7 +1,7 @@
 -- Run with: supabase test db
 begin;
 create extension if not exists pgtap with schema extensions;
-select extensions.plan(17);
+select extensions.plan(20);
 
 -- Auth trigger creates a pending profile; fixtures promote only the test identities.
 insert into auth.users (id, aud, role, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -86,6 +86,7 @@ select extensions.is(
 );
 
 select pg_catalog.set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000004',true);
+select extensions.is((select count(*)::int from public.profiles),0,'inactive user cannot read even their profile');
 select extensions.is((select count(*)::int from public.products),0,'inactive user cannot read products');
 select extensions.is((select count(*)::int from public.customers),0,'inactive user cannot read customers');
 select extensions.is((select count(*)::int from public.invoices),0,'inactive user cannot read invoices');
